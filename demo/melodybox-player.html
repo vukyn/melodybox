@@ -1,0 +1,329 @@
+<!--
+  melodybox feature doc — mirrors the rainybox feature-doc STANDARD TEMPLATE
+  (rainybox/demo/rainybox-nowplaying.html). Sections, in order:
+    1. Usecase        — 1 line: what the device does
+    2. Hardware BOM   — parts + qty + notes
+    3. Wiring diagram — SVG: ESP32 + OLED (I2C) + YX6300 (UART) + 5 buttons to GND
+    4. Pin map        — table of every pin (source of pin truth)
+    5. Data flow      — button -> action -> YX5300 UART cmd; state -> OLED render
+    6. Operation mock — animated 128x64 OLED sim of the now-playing screen
+  demo/ = source of truth (like the platform services). Never delete old mocks.
+  Offline device: NO WiFi. Reuses the rainybox dark theme for visual consistency.
+-->
+<style>
+  :root{
+    --bg:#0f1216; --panel:#171b22; --line:#262c36; --ink:#e6e9ef; --dim:#8a93a3;
+    --accent:#7cc4ff; --ok:#4dd77f; --warn:#f5c542;
+    --wire-r:#ff5a52; --wire-k:#3a3f47; --wire-y:#f5c542; --wire-g:#3ecf6a;
+    --wire-c:#4fd6e0; --wire-o:#ff9d4d; --wire-p:#c88bff;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+    font:15px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif}
+  .wrap{max-width:920px;margin:0 auto;padding:28px 20px 64px}
+  h1{font-size:26px;margin:0 0 4px}
+  h2{font-size:14px;letter-spacing:.08em;text-transform:uppercase;color:var(--accent);
+    margin:36px 0 12px;border-bottom:1px solid var(--line);padding-bottom:6px}
+  .sub{color:var(--dim);margin:0 0 8px}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px}
+  table{width:100%;border-collapse:collapse;font-size:14px}
+  th,td{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line)}
+  th{color:var(--dim);font-weight:600}
+  td code,code.k{background:#0b0e12;border:1px solid var(--line);border-radius:5px;padding:1px 6px;font-size:13px}
+  .flow{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+  .node{background:#0b0e12;border:1px solid var(--line);border-radius:8px;padding:8px 12px;font-size:13px}
+  .node b{color:var(--accent)}
+  .arw{color:var(--accent)}
+  .legend{display:flex;gap:16px;flex-wrap:wrap;margin-top:12px;font-size:13px;color:var(--dim)}
+  .swatch{display:inline-block;width:14px;height:4px;border-radius:2px;vertical-align:middle;margin-right:6px}
+  .diagram-scroll{overflow-x:auto}
+  /* OLED sim */
+  .sim{display:flex;gap:24px;flex-wrap:wrap;align-items:flex-start}
+  .oled{background:#000;border:6px solid #1b2530;border-radius:8px;padding:6px;
+    box-shadow:0 0 24px rgba(124,196,255,.15)}
+  .screen{width:256px;height:128px;position:relative;overflow:hidden;
+    background:#04121f;border-radius:2px}
+  .px{color:#8fd8ff;font-family:"Courier New",monospace;text-shadow:0 0 6px rgba(143,216,255,.7)}
+  .s-head{position:absolute;top:6px;left:8px;font-size:16px;font-weight:700}
+  .s-vol-ico{position:absolute;top:8px;right:8px;font-size:13px}
+  .s-rule{position:absolute;top:32px;left:0;right:0;height:1px;background:#1b6ea3;opacity:.6}
+  .s-title-wrap{position:absolute;top:56px;left:0;right:0;height:26px;overflow:hidden}
+  .s-title{position:absolute;white-space:nowrap;font-size:24px;font-weight:700}
+  .s-status{position:absolute;bottom:8px;left:8px;font-size:14px;letter-spacing:.02em}
+  .s-vol-bar{position:absolute;bottom:10px;right:8px;width:96px;height:8px;
+    border:1px solid #2f89c0;border-radius:1px}
+  .s-vol-fill{position:absolute;left:0;top:0;bottom:0;background:#8fd8ff;
+    box-shadow:0 0 6px rgba(143,216,255,.6);transition:width .12s ease-out}
+  /* control pad = the 5 physical buttons */
+  .pad{display:grid;grid-template-columns:repeat(3,64px);gap:10px}
+  .pad .k2{grid-column:span 3}
+  .btn{background:#0b0e12;border:1px solid var(--line);color:var(--ink);border-radius:10px;
+    padding:12px 8px;font-size:13px;cursor:pointer;text-align:center;user-select:none;
+    transition:transform .06s ease-out,border-color .1s,background .1s}
+  .btn small{display:block;color:var(--dim);font-size:10px;margin-top:2px;letter-spacing:.04em}
+  .btn:active,.btn.press{transform:scale(.94);border-color:var(--accent);background:#0e1a24}
+  .btn.play.on{border-color:var(--ok);color:var(--ok)}
+  .hint{color:var(--dim);font-size:13px;margin-top:8px}
+  .stat{margin-top:12px;font-size:13px;color:var(--dim)}
+  .stat b{color:var(--ink)}
+</style>
+
+<div class="wrap">
+  <h1>melodybox — Offline MP3 Player</h1>
+  <p class="sub">ESP32-classic desk MP3 player. No WiFi. 5 buttons drive playback of tracks on the YX6300 module's SD card; an SSD1306 OLED shows the now-playing screen. Feature-doc standard: BOM → wiring → pin map → data flow → sim.</p>
+
+  <h2>1 · Usecase</h2>
+  <div class="card">Sits on the desk, fully offline. Press <code class="k">PLAY/PAUSE</code> to toggle, <code class="k">NEXT</code>/<code class="k">PREV</code> to change track (wraps at <code class="k">TRACK_COUNT</code>), <code class="k">VOL+</code>/<code class="k">VOL-</code> to set volume 0–30. The OLED shows <b>melodybox</b> + current <b>Track N</b> + play/pause state + volume. Boots <b>paused</b> — the user presses play to start.</div>
+
+  <h2>2 · Hardware (BOM)</h2>
+  <div class="card"><table>
+    <tr><th>Part</th><th>Qty</th><th>Note</th></tr>
+    <tr><td>ESP32 classic dev board</td><td>1</td><td>WROOM-32, board <code>esp32dev</code>, 4MB flash, no PSRAM (<code>huge_app.csv</code> partitions for the VN unifont)</td></tr>
+    <tr><td>OLED 128×64 I2C</td><td>1</td><td>SSD1306 0.96" — 4 pins VCC/GND/SCL/SDA, addr <code>0x3C</code></td></tr>
+    <tr><td>YX6300 / YX5300 MP3 module</td><td>1</td><td>Catalex serial MP3 module, UART 9600 baud</td></tr>
+    <tr><td>micro-SD card</td><td>1</td><td>tracks live on the card; set <code>TRACK_COUNT</code> to file count</td></tr>
+    <tr><td>Speaker</td><td>1</td><td>3W 4–8Ω into the module's speaker terminals (or 3.5mm out)</td></tr>
+    <tr><td>Push buttons</td><td>5</td><td>momentary, active-low to GND, internal pull-ups</td></tr>
+    <tr><td>Breadboard + jumpers</td><td>1</td><td>~13 wires (power, I2C, UART, 5 buttons, shared GND)</td></tr>
+    <tr><td>Cable micro-USB</td><td>1</td><td>flash + power</td></tr>
+  </table></div>
+
+  <h2>3 · Wiring diagram</h2>
+  <div class="card diagram-scroll">
+    <svg viewBox="0 0 780 470" width="100%" style="min-width:640px">
+      <!-- ===== ESP32 board ===== -->
+      <rect x="230" y="110" width="200" height="240" rx="12" fill="#12161c" stroke="#39424f"/>
+      <rect x="300" y="98" width="60" height="14" rx="3" fill="#2a2f38"/>
+      <text x="330" y="140" fill="#8a93a3" font-size="13" text-anchor="middle" font-family="sans-serif">ESP32 classic</text>
+      <text x="330" y="158" fill="#5b6472" font-size="11" text-anchor="middle" font-family="sans-serif">(WROOM-32)</text>
+
+      <!-- right-edge pins: power + I2C + UART -->
+      <g font-family="monospace" font-size="12" fill="#e6e9ef">
+        <circle cx="430" cy="178" r="5" fill="#ff5a52"/><text x="424" y="182" text-anchor="end">3V3</text>
+        <circle cx="430" cy="208" r="5" fill="#3a3f47" stroke="#666"/><text x="424" y="212" text-anchor="end">GND</text>
+        <circle cx="430" cy="238" r="5" fill="#3ecf6a"/><text x="424" y="242" text-anchor="end">GPIO21 (SDA)</text>
+        <circle cx="430" cy="268" r="5" fill="#f5c542"/><text x="424" y="272" text-anchor="end">GPIO22 (SCL)</text>
+        <circle cx="430" cy="298" r="5" fill="#4fd6e0"/><text x="424" y="302" text-anchor="end">GPIO16 (RX)</text>
+        <circle cx="430" cy="328" r="5" fill="#ff9d4d"/><text x="424" y="332" text-anchor="end">GPIO17 (TX)</text>
+      </g>
+
+      <!-- left-edge pins: 5 buttons -->
+      <g font-family="monospace" font-size="12" fill="#e6e9ef">
+        <circle cx="230" cy="150" r="5" fill="#c88bff"/><text x="238" y="154">GPIO32</text>
+        <circle cx="230" cy="188" r="5" fill="#c88bff"/><text x="238" y="192">GPIO33</text>
+        <circle cx="230" cy="226" r="5" fill="#c88bff"/><text x="238" y="230">GPIO25</text>
+        <circle cx="230" cy="264" r="5" fill="#c88bff"/><text x="238" y="268">GPIO26</text>
+        <circle cx="230" cy="302" r="5" fill="#c88bff"/><text x="238" y="306">GPIO27</text>
+        <circle cx="230" cy="340" r="5" fill="#3a3f47" stroke="#666"/><text x="238" y="344">GND</text>
+      </g>
+
+      <!-- ===== OLED module (top-right) ===== -->
+      <rect x="600" y="70" width="150" height="120" rx="8" fill="#123a63" stroke="#1b6ea3"/>
+      <rect x="618" y="94" width="114" height="60" rx="3" fill="#04121f" stroke="#0a2a44"/>
+      <text x="675" y="180" fill="#8a93a3" font-size="12" text-anchor="middle" font-family="sans-serif">OLED 128×64</text>
+      <g font-family="monospace" font-size="11" fill="#e6e9ef">
+        <circle cx="600" cy="92"  r="4.5" fill="#ff5a52"/><text x="592" y="96" text-anchor="end">VCC</text>
+        <circle cx="600" cy="116" r="4.5" fill="#3a3f47" stroke="#666"/><text x="592" y="120" text-anchor="end">GND</text>
+        <circle cx="600" cy="140" r="4.5" fill="#f5c542"/><text x="592" y="144" text-anchor="end">SCL</text>
+        <circle cx="600" cy="164" r="4.5" fill="#3ecf6a"/><text x="592" y="168" text-anchor="end">SDA</text>
+      </g>
+
+      <!-- ===== YX6300 MP3 module (bottom-right) ===== -->
+      <rect x="600" y="250" width="150" height="140" rx="8" fill="#2a1f3a" stroke="#5b3f7a"/>
+      <rect x="700" y="268" width="38" height="54" rx="2" fill="#0b0e12" stroke="#5b3f7a"/>
+      <text x="719" y="299" fill="#8a93a3" font-size="9" text-anchor="middle" font-family="sans-serif">SD</text>
+      <text x="662" y="378" fill="#8a93a3" font-size="12" text-anchor="middle" font-family="sans-serif">YX6300 MP3</text>
+      <g font-family="monospace" font-size="11" fill="#e6e9ef">
+        <circle cx="600" cy="272" r="4.5" fill="#ff5a52"/><text x="592" y="276" text-anchor="end">VCC</text>
+        <circle cx="600" cy="296" r="4.5" fill="#3a3f47" stroke="#666"/><text x="592" y="300" text-anchor="end">GND</text>
+        <circle cx="600" cy="320" r="4.5" fill="#ff9d4d"/><text x="592" y="324" text-anchor="end">RX</text>
+        <circle cx="600" cy="344" r="4.5" fill="#4fd6e0"/><text x="592" y="348" text-anchor="end">TX</text>
+      </g>
+
+      <!-- ===== 5 push buttons (far left) ===== -->
+      <!-- shared GND rail -->
+      <path d="M230 340 L 60 340 L 60 150" fill="none" stroke="#3a3f47" stroke-width="3"/>
+      <g font-family="sans-serif" font-size="10" fill="#8a93a3" text-anchor="middle">
+        <!-- each button: GND rail -> switch -> GPIO pin -->
+        <rect x="80" y="141" width="120" height="18" rx="4" fill="#0b0e12" stroke="#c88bff"/><text x="140" y="154" fill="#e6e9ef">PLAY/PAUSE</text>
+        <rect x="80" y="179" width="120" height="18" rx="4" fill="#0b0e12" stroke="#c88bff"/><text x="140" y="192" fill="#e6e9ef">NEXT</text>
+        <rect x="80" y="217" width="120" height="18" rx="4" fill="#0b0e12" stroke="#c88bff"/><text x="140" y="230" fill="#e6e9ef">PREV</text>
+        <rect x="80" y="255" width="120" height="18" rx="4" fill="#0b0e12" stroke="#c88bff"/><text x="140" y="268" fill="#e6e9ef">VOL +</text>
+        <rect x="80" y="293" width="120" height="18" rx="4" fill="#0b0e12" stroke="#c88bff"/><text x="140" y="306" fill="#e6e9ef">VOL −</text>
+      </g>
+      <!-- button GPIO legs to left pins -->
+      <g fill="none" stroke="#c88bff" stroke-width="2.5">
+        <path d="M200 150 L 230 150"/>
+        <path d="M200 188 L 230 188"/>
+        <path d="M200 226 L 230 226"/>
+        <path d="M200 264 L 230 264"/>
+        <path d="M200 302 L 230 302"/>
+      </g>
+      <!-- button GND legs to rail -->
+      <g fill="none" stroke="#3a3f47" stroke-width="2.5">
+        <path d="M80 150 L 60 150"/>
+        <path d="M80 188 L 60 188"/>
+        <path d="M80 226 L 60 226"/>
+        <path d="M80 264 L 60 264"/>
+        <path d="M80 302 L 60 302"/>
+      </g>
+
+      <!-- ===== wires: ESP32 -> OLED (I2C) + power ===== -->
+      <!-- 3V3 splits to both modules -->
+      <path d="M430 178 C 500 150, 540 90, 600 92" fill="none" stroke="#ff5a52" stroke-width="3"/>
+      <path d="M430 178 C 520 200, 540 260, 600 272" fill="none" stroke="#ff5a52" stroke-width="3" stroke-dasharray="2 4"/>
+      <!-- GND splits to both modules -->
+      <path d="M430 208 C 500 180, 540 116, 600 116" fill="none" stroke="#3a3f47" stroke-width="3"/>
+      <path d="M430 208 C 520 230, 540 290, 600 296" fill="none" stroke="#3a3f47" stroke-width="3" stroke-dasharray="2 4"/>
+      <!-- I2C -->
+      <path d="M430 238 C 510 230, 540 168, 600 164" fill="none" stroke="#3ecf6a" stroke-width="3"/>
+      <path d="M430 268 C 510 260, 540 144, 600 140" fill="none" stroke="#f5c542" stroke-width="3"/>
+      <!-- UART crossover: ESP32 RX(16) <- module TX ; ESP32 TX(17) -> module RX -->
+      <path d="M430 298 C 510 320, 540 348, 600 344" fill="none" stroke="#4fd6e0" stroke-width="3"/>
+      <path d="M430 328 C 500 340, 540 322, 600 320" fill="none" stroke="#ff9d4d" stroke-width="3"/>
+    </svg>
+    <div class="legend">
+      <span><span class="swatch" style="background:#ff5a52"></span>3V3 → VCC (both modules)</span>
+      <span><span class="swatch" style="background:#3a3f47"></span>GND → GND (common)</span>
+      <span><span class="swatch" style="background:#3ecf6a"></span>GPIO21 → OLED SDA</span>
+      <span><span class="swatch" style="background:#f5c542"></span>GPIO22 → OLED SCL</span>
+      <span><span class="swatch" style="background:#4fd6e0"></span>GPIO16 (RX) ← module TX</span>
+      <span><span class="swatch" style="background:#ff9d4d"></span>GPIO17 (TX) → module RX</span>
+      <span><span class="swatch" style="background:#c88bff"></span>GPIO32/33/25/26/27 → button → GND</span>
+    </div>
+  </div>
+
+  <h2>4 · Pin map</h2>
+  <div class="card"><table>
+    <tr><th>ESP32 GPIO</th><th>Wire</th><th>To</th><th>Config (config.h)</th></tr>
+    <tr><td>3V3</td><td>red</td><td>OLED VCC + YX6300 VCC</td><td>—</td></tr>
+    <tr><td>GND</td><td>black</td><td>OLED GND + YX6300 GND + button rail</td><td>—</td></tr>
+    <tr><td>GPIO21</td><td>green</td><td>OLED SDA</td><td><code>OLED_SDA 21</code></td></tr>
+    <tr><td>GPIO22</td><td>yellow</td><td>OLED SCL</td><td><code>OLED_SCL 22</code></td></tr>
+    <tr><td>GPIO16</td><td>cyan</td><td>YX6300 TX (ESP32 receives)</td><td><code>MP3_RX 16</code></td></tr>
+    <tr><td>GPIO17</td><td>orange</td><td>YX6300 RX (ESP32 transmits)</td><td><code>MP3_TX 17</code></td></tr>
+    <tr><td>GPIO32</td><td>purple</td><td>PLAY/PAUSE button → GND</td><td><code>BTN_PLAY 32</code></td></tr>
+    <tr><td>GPIO33</td><td>purple</td><td>NEXT button → GND</td><td><code>BTN_NEXT 33</code></td></tr>
+    <tr><td>GPIO25</td><td>purple</td><td>PREV button → GND</td><td><code>BTN_PREV 25</code></td></tr>
+    <tr><td>GPIO26</td><td>purple</td><td>VOL+ button → GND</td><td><code>BTN_VOLUP 26</code></td></tr>
+    <tr><td>GPIO27</td><td>purple</td><td>VOL- button → GND</td><td><code>BTN_VOLDN 27</code></td></tr>
+  </table>
+  <p class="hint">GPIO21/22 = ESP32-classic HW-default I2C. UART2 (<code class="k">Serial2</code>) is remapped to GPIO16/17 — note the crossover: <b>ESP32 RX ← module TX</b>, <b>ESP32 TX → module RX</b>. All 5 button pins are pull-up capable, non-strapping, non-input-only. OLED I2C addr <code class="k">0x3C</code>. Change any pin in <code class="k">include/config.h</code>. <code class="k">START_VOLUME 18</code>, <code class="k">TRACK_COUNT 20</code>.</p></div>
+
+  <h2>5 · Data flow</h2>
+  <div class="card">
+    <div class="flow">
+      <span class="node">Button press<br>(active-low)</span><span class="arw">→</span>
+      <span class="node"><b>kuino::button</b><br>::pressed() debounce</span><span class="arw">→</span>
+      <span class="node">action<br>play / next / prev / vol</span><span class="arw">→</span>
+      <span class="node"><b>kuino::mp3</b><br>YX5300 UART cmd</span><span class="arw">→</span>
+      <span class="node">module plays<br>SD track → speaker</span>
+    </div>
+    <div class="flow" style="margin-top:12px">
+      <span class="node">state<br>trackIndex / playing / volume</span><span class="arw">→</span>
+      <span class="node"><b>kuino::display</b><br>drawHeader + drawScroll</span><span class="arw">→</span>
+      <span class="node">U8g2 buffer<br>(VN unifont)</span><span class="arw">→</span>
+      <span class="node">OLED 128×64</span>
+    </div>
+    <p class="hint">One <code class="k">loop()</code> tick (~40ms, ~25fps): <code class="k">checkButtons()</code> → mutate state + fire the matching YX5300 command → <code class="k">marquee += 1</code> → <code class="k">render()</code> redraws the OLED. Every action keeps local state and the module in sync (e.g. <code class="k">nextTrack()</code> = index wrap + <code class="k">playIndex()</code> + <code class="k">playing=true</code>).</p>
+  </div>
+
+  <h2>6 · Operation sim (mock OLED)</h2>
+  <div class="card">
+    <div class="sim">
+      <div>
+        <div class="oled"><div class="screen px" id="screen"></div></div>
+        <p class="stat">Track <b id="st-track">1</b>/20 · <b id="st-state">paused</b> · vol <b id="st-vol">18</b>/30</p>
+      </div>
+      <div>
+        <!-- The 5 buttons below mirror the physical GPIO buttons 1:1.
+             on click: run the same action the firmware runs, then re-render. -->
+        <div class="pad">
+          <div class="btn play on k2" data-a="play" id="btn-play">▶ / ❚❚ PLAY<small>GPIO32</small></div>
+          <div class="btn" data-a="prev">⏮ PREV<small>GPIO25</small></div>
+          <div class="btn" data-a="play2" style="visibility:hidden"></div>
+          <div class="btn" data-a="next">⏭ NEXT<small>GPIO33</small></div>
+          <div class="btn" data-a="voldn">VOL −<small>GPIO27</small></div>
+          <div class="btn" data-a="play3" style="visibility:hidden"></div>
+          <div class="btn" data-a="volup">VOL +<small>GPIO26</small></div>
+        </div>
+        <p class="hint">Mirrors how <code class="k">src/main.cpp</code> renders: <b>melodybox</b> header + rule at y16 + <code class="k">"Track N"</code> (marquee-scrolls when it overflows the 128px width, else centered) + <code class="k">">= PLAY" / "|| PAUSE"</code> status + volume. Boots paused. Track wraps 20→1.</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+  const screen = document.getElementById('screen');
+  const TRACK_COUNT = 20;
+  let trackIndex = 1;      // 1-based, matches firmware
+  let playing = false;     // boots paused
+  let volume = 18;         // START_VOLUME
+  let marqueeAnim = null;
+
+  const stTrack = document.getElementById('st-track');
+  const stState = document.getElementById('st-state');
+  const stVol   = document.getElementById('st-vol');
+
+  function el(tag,cls,txt){const e=document.createElement(tag);e.className=cls;if(txt!=null)e.textContent=txt;return e;}
+
+  function render(){
+    if(marqueeAnim){ marqueeAnim.cancel(); marqueeAnim = null; }
+    screen.innerHTML = '';
+
+    // header + rule (drawHeader + drawHLine(0,16,128))
+    screen.append(el('div','s-head','melodybox'));
+    screen.append(el('div','s-vol-ico', playing ? '♪' : ''));
+    screen.append(el('div','s-rule'));
+
+    // track line (drawScroll(oled,40,"Track N",...))
+    const wrap = el('div','s-title-wrap');
+    const t = el('div','s-title', 'Track ' + trackIndex);
+    wrap.append(t); screen.append(wrap);
+
+    // status line (">= PLAY" / "|| PAUSE"   vol N)
+    screen.append(el('div','s-status', playing ? '▶▶ PLAY' : '❙❙ PAUSE'));
+    const bar = el('div','s-vol-bar');
+    const fill = el('div','s-vol-fill'); fill.style.width = (volume/30*100)+'%';
+    bar.append(fill); screen.append(bar);
+
+    // marquee: scroll only when the label overflows, else center (firmware parity)
+    requestAnimationFrame(()=>{
+      const overflow = t.scrollWidth - wrap.clientWidth;
+      if(overflow > 0){
+        marqueeAnim = t.animate(
+          [{transform:'translateX(6px)'},{transform:`translateX(-${overflow+12}px)`},{transform:'translateX(6px)'}],
+          {duration:(overflow+12)*45, iterations:Infinity, easing:'linear'});
+      } else {
+        t.style.left = ((wrap.clientWidth - t.scrollWidth)/2)+'px';
+      }
+    });
+
+    // status readout
+    stTrack.textContent = trackIndex;
+    stState.textContent = playing ? 'playing' : 'paused';
+    stVol.textContent = volume;
+  }
+
+  // actions — 1:1 with main.cpp
+  function togglePlay(){ playing = !playing; }
+  function nextTrack(){ trackIndex = trackIndex % TRACK_COUNT + 1; playing = true; }
+  function prevTrack(){ trackIndex = (trackIndex - 2 + TRACK_COUNT) % TRACK_COUNT + 1; playing = true; }
+  function volumeUp(){ if(volume < 30) volume++; }
+  function volumeDown(){ if(volume > 0) volume--; }
+
+  const actions = { play:togglePlay, next:nextTrack, prev:prevTrack, volup:volumeUp, voldn:volumeDown };
+
+  document.querySelectorAll('.btn[data-a]').forEach(b=>{
+    const a = b.dataset.a;
+    if(!actions[a]) return;
+    b.onclick = ()=>{
+      actions[a]();
+      b.classList.add('press'); setTimeout(()=>b.classList.remove('press'),120);
+      document.getElementById('btn-play').classList.toggle('on', playing);
+      render();
+    };
+  });
+
+  render();
+</script>
