@@ -1,0 +1,26 @@
+#pragma once
+// Copy to config.h and adjust to your wiring. config.h is gitignored.
+
+// OLED I2C (ESP32 classic HW-default I2C pins)
+#define OLED_SDA 21
+#define OLED_SCL 22
+
+// YX6300 MP3 module — HardwareSerial2 (UART2). Wire ESP32 RX <- module TX,
+// ESP32 TX -> module RX.
+#define MP3_RX 16   // ESP32 receives on this pin (from module TX)
+#define MP3_TX 17   // ESP32 transmits on this pin (to module RX)
+
+// Buttons — active-low to GND, INPUT_PULLUP. All on pullup-capable,
+// non-strapping, non-input-only GPIOs.
+#define BTN_PLAY  32   // play / pause toggle
+#define BTN_NEXT  33
+#define BTN_PREV  25
+#define BTN_VOLUP 26
+#define BTN_VOLDN 27
+
+// Starting volume (0..30)
+#define START_VOLUME 18
+
+// Number of tracks on the SD card (for wrap-around on next/prev). Set to your
+// card's file count.
+#define TRACK_COUNT 20
