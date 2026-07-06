@@ -79,12 +79,12 @@
   <div class="card"><table>
     <tr><th>Part</th><th>Qty</th><th>Note</th></tr>
     <tr><td>ESP32 classic dev board</td><td>1</td><td>WROOM-32, board <code>esp32dev</code>, 4MB flash, no PSRAM (<code>huge_app.csv</code> partitions for the VN unifont)</td></tr>
-    <tr><td>OLED 128×64 I2C</td><td>1</td><td>SSD1306 0.96" — 4 pins VCC/GND/SCL/SDA, addr <code>0x3C</code></td></tr>
-    <tr><td>YX6300 / YX5300 MP3 module</td><td>1</td><td>Catalex serial MP3 module, UART 9600 baud</td></tr>
+    <tr><td>OLED 128×64 I2C</td><td>1</td><td>SSD1306 0.96" — 4 pins VCC/GND/SCL/SDA, addr <code>0x3C</code>. <b>VCC ← 3V3</b> (low current; keeps I2C at 3.3V logic level)</td></tr>
+    <tr><td>YX6300 / YX5300 MP3 module</td><td>1</td><td>Catalex serial MP3 module, UART 9600 baud. <b>VCC ← VIN (~5V)</b>, NOT 3V3 — the SD card + DAC need 5V; on 3V3 it browns out → phantom SD insert/remove</td></tr>
     <tr><td>micro-SD card</td><td>1</td><td>tracks live on the card; set <code>TRACK_COUNT</code> to file count</td></tr>
     <tr><td>Speaker</td><td>1</td><td>3W 4–8Ω into the module's speaker terminals (or 3.5mm out)</td></tr>
     <tr><td>Push buttons</td><td>5</td><td>momentary, active-low to GND, internal pull-ups</td></tr>
-    <tr><td>Breadboard + jumpers</td><td>1</td><td>~13 wires (power, I2C, UART, 5 buttons, shared GND)</td></tr>
+    <tr><td>Breadboard + jumpers</td><td>1</td><td>~14 wires (2 power: 3V3→OLED + VIN→YX6300, I2C, UART, 5 buttons, shared GND)</td></tr>
     <tr><td>Cable micro-USB</td><td>1</td><td>flash + power</td></tr>
   </table></div>
 
@@ -97,8 +97,9 @@
       <text x="330" y="140" fill="#8a93a3" font-size="13" text-anchor="middle" font-family="sans-serif">ESP32 classic</text>
       <text x="330" y="158" fill="#5b6472" font-size="11" text-anchor="middle" font-family="sans-serif">(WROOM-32)</text>
 
-      <!-- right-edge pins: power + I2C + UART -->
+      <!-- right-edge pins: power (VIN 5V + 3V3) + I2C + UART -->
       <g font-family="monospace" font-size="12" fill="#e6e9ef">
+        <circle cx="430" cy="148" r="5" fill="#ff9f43"/><text x="424" y="152" text-anchor="end">VIN (~5V)</text>
         <circle cx="430" cy="178" r="5" fill="#ff5a52"/><text x="424" y="182" text-anchor="end">3V3</text>
         <circle cx="430" cy="208" r="5" fill="#3a3f47" stroke="#666"/><text x="424" y="212" text-anchor="end">GND</text>
         <circle cx="430" cy="238" r="5" fill="#3ecf6a"/><text x="424" y="242" text-anchor="end">GPIO21 (SDA)</text>
@@ -134,7 +135,7 @@
       <text x="719" y="299" fill="#8a93a3" font-size="9" text-anchor="middle" font-family="sans-serif">SD</text>
       <text x="662" y="378" fill="#8a93a3" font-size="12" text-anchor="middle" font-family="sans-serif">YX6300 MP3</text>
       <g font-family="monospace" font-size="11" fill="#e6e9ef">
-        <circle cx="600" cy="272" r="4.5" fill="#ff5a52"/><text x="592" y="276" text-anchor="end">VCC</text>
+        <circle cx="600" cy="272" r="4.5" fill="#ff9f43"/><text x="592" y="276" text-anchor="end">VCC</text>
         <circle cx="600" cy="296" r="4.5" fill="#3a3f47" stroke="#666"/><text x="592" y="300" text-anchor="end">GND</text>
         <circle cx="600" cy="320" r="4.5" fill="#ff9d4d"/><text x="592" y="324" text-anchor="end">RX</text>
         <circle cx="600" cy="344" r="4.5" fill="#4fd6e0"/><text x="592" y="348" text-anchor="end">TX</text>
@@ -169,9 +170,11 @@
       </g>
 
       <!-- ===== wires: ESP32 -> OLED (I2C) + power ===== -->
-      <!-- 3V3 splits to both modules -->
+      <!-- TWO separate power rails: 3V3 -> OLED only (3.3V logic); VIN(~5V) -> YX6300 only -->
+      <!-- 3V3 -> OLED VCC (low current, keeps I2C at 3.3V logic level) -->
       <path d="M430 178 C 500 150, 540 90, 600 92" fill="none" stroke="#ff5a52" stroke-width="3"/>
-      <path d="M430 178 C 520 200, 540 260, 600 272" fill="none" stroke="#ff5a52" stroke-width="3" stroke-dasharray="2 4"/>
+      <!-- VIN(~5V) -> YX6300 VCC (SD card + DAC need 5V; 3V3 browns out) -->
+      <path d="M430 148 C 535 158, 548 266, 600 272" fill="none" stroke="#ff9f43" stroke-width="3"/>
       <!-- GND splits to both modules -->
       <path d="M430 208 C 500 180, 540 116, 600 116" fill="none" stroke="#3a3f47" stroke-width="3"/>
       <path d="M430 208 C 520 230, 540 290, 600 296" fill="none" stroke="#3a3f47" stroke-width="3" stroke-dasharray="2 4"/>
@@ -183,7 +186,8 @@
       <path d="M430 328 C 500 340, 540 322, 600 320" fill="none" stroke="#ff9d4d" stroke-width="3"/>
     </svg>
     <div class="legend">
-      <span><span class="swatch" style="background:#ff5a52"></span>3V3 → VCC (both modules)</span>
+      <span><span class="swatch" style="background:#ff5a52"></span>3V3 → OLED VCC</span>
+      <span><span class="swatch" style="background:#ff9f43"></span>VIN (~5V) → YX6300 VCC</span>
       <span><span class="swatch" style="background:#3a3f47"></span>GND → GND (common)</span>
       <span><span class="swatch" style="background:#3ecf6a"></span>GPIO21 → OLED SDA</span>
       <span><span class="swatch" style="background:#f5c542"></span>GPIO22 → OLED SCL</span>
@@ -191,12 +195,16 @@
       <span><span class="swatch" style="background:#ff9d4d"></span>GPIO17 (TX) → module RX</span>
       <span><span class="swatch" style="background:#c88bff"></span>GPIO32/33/25/26/27 → button → GND</span>
     </div>
+    <p class="hint" style="border-left:3px solid #ff9f43;padding-left:10px;margin-top:14px">
+      <b style="color:#ff9f43">Power split:</b> YX6300 on <b>VIN (5V)</b>, OLED on <b>3V3</b>. Powering the YX6300 from 3V3 under-powers its SD card and DAC → phantom SD insert/remove events (the flip-flop bug). Keep the OLED on 3V3 so its I2C SDA/SCL stay at the ESP32's 3.3V logic level.
+    </p>
   </div>
 
   <h2>4 · Pin map</h2>
   <div class="card"><table>
     <tr><th>ESP32 GPIO</th><th>Wire</th><th>To</th><th>Config (config.h)</th></tr>
-    <tr><td>3V3</td><td>red</td><td>OLED VCC + YX6300 VCC</td><td>—</td></tr>
+    <tr><td>3V3</td><td>red</td><td>OLED VCC</td><td>—</td></tr>
+    <tr><td>VIN</td><td>orange</td><td>YX6300 VCC (~5V, USB-powered)</td><td>—</td></tr>
     <tr><td>GND</td><td>black</td><td>OLED GND + YX6300 GND + button rail</td><td>—</td></tr>
     <tr><td>GPIO21</td><td>green</td><td>OLED SDA</td><td><code>OLED_SDA 21</code></td></tr>
     <tr><td>GPIO22</td><td>yellow</td><td>OLED SCL</td><td><code>OLED_SCL 22</code></td></tr>
