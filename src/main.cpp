@@ -166,7 +166,11 @@ void setup() {
   // Leave paused — the user presses play to start.
 }
 
-// Log unsolicited module events (track finished, SD card in/out).
+// Log unsolicited module events (track finished, SD card in/out). SD state is
+// de-duped: only genuine transitions are logged, so repeated status frames
+// don't spam the log.
+bool sdPresent = true;  // assumed present after the boot query succeeds
+
 void checkMp3Events() {
   uint8_t cmd;
   uint16_t param;
@@ -174,9 +178,15 @@ void checkMp3Events() {
   if (cmd == kuino::mp3::YX5300::EVT_TRACK_FINISHED) {
     Serial.printf("[mp3] track %u finished\n", param);
   } else if (cmd == kuino::mp3::YX5300::EVT_SD_INSERTED) {
-    Serial.println("[mp3] SD inserted");
+    if (!sdPresent) {
+      sdPresent = true;
+      Serial.println("[mp3] SD inserted");
+    }
   } else if (cmd == kuino::mp3::YX5300::EVT_SD_REMOVED) {
-    Serial.println("[mp3] SD removed");
+    if (sdPresent) {
+      sdPresent = false;
+      Serial.println("[mp3] SD removed");
+    }
   }
 }
 
