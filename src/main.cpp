@@ -26,8 +26,9 @@ kuino::mp3::YX5300 player;
 // ---------------------------------------------------------------------------
 // Player state (kept in sync with the module by every action)
 // ---------------------------------------------------------------------------
+bool sdOk       = false;         // true once the module reports a readable SD
+int  trackCount = 0;             // real track count from the module (0 = unknown/empty)
 int  trackIndex = 1;             // 1-based track number
-int  trackCount = TRACK_COUNT;   // total tracks (overridden by SD query at boot)
 bool playing    = false;         // start paused — user presses play
 int  volume     = START_VOLUME;  // 0..30
 int  marquee    = 0;             // marquee scroll offset (px)
@@ -43,6 +44,34 @@ struct ButtonState {
 ButtonState btnPlay, btnNext, btnPrev, btnVolUp, btnVolDn;
 
 // ---------------------------------------------------------------------------
+// SD / track detection — the source of truth is the module, queried at boot
+// and again whenever a card is (re)inserted. No hardcoded track count.
+// ---------------------------------------------------------------------------
+void queryTracks() {
+  uint16_t count = 0;
+  bool ok = false;
+  for (int i = 0; i < 3 && !ok; i++) {  // retry: the module can be slow to answer
+    if (player.queryFileCount(count)) ok = true;
+    else delay(200);
+  }
+
+  if (ok) {
+    sdOk = true;
+    trackCount = count;
+    if (count > 0)
+      Serial.printf("[melodybox] SD detected: %d tracks\n", trackCount);
+    else
+      Serial.println("[melodybox] SD detected but no tracks");
+  } else {
+    sdOk = false;
+    trackCount = 0;
+    Serial.println("[melodybox] SD not detected");
+  }
+
+  if (trackIndex > trackCount) trackIndex = 1;
+}
+
+// ---------------------------------------------------------------------------
 // Rendering
 // ---------------------------------------------------------------------------
 void render() {
@@ -51,9 +80,22 @@ void render() {
   kuino::display::drawHeader(oled, "melodybox", FONT_VN);
   oled.drawHLine(0, 16, 128);
 
-  kuino::display::drawScroll(oled, 40, String("Track ") + trackIndex, FONT_VN,
-                             marquee);
+  // No card / empty card get a dedicated screen instead of the now-playing UI.
+  if (!sdOk) {
+    kuino::display::drawScroll(oled, 40, "No SD card", FONT_VN, 0);
+    oled.sendBuffer();
+    return;
+  }
+  if (trackCount == 0) {
+    kuino::display::drawScroll(oled, 40, "No tracks", FONT_VN, 0);
+    oled.sendBuffer();
+    return;
+  }
 
+  // Title line carries the real index/total; status line shows play state + vol.
+  kuino::display::drawScroll(oled, 40,
+                             String("Track ") + trackIndex + "/" + trackCount,
+                             FONT_VN, marquee);
   oled.setFont(FONT_SMALL);
   String status = String(playing ? ">= PLAY" : "|| PAUSE") + "   vol " + volume;
   oled.drawStr(0, 62, status.c_str());
@@ -62,9 +104,11 @@ void render() {
 }
 
 // ---------------------------------------------------------------------------
-// Actions — each mutates local state and the module together
+// Actions — each mutates local state and the module together. Playback actions
+// are no-ops until a card with tracks is present.
 // ---------------------------------------------------------------------------
 void togglePlay() {
+  if (!sdOk || trackCount == 0) return;
   playing = !playing;
   playing ? player.play() : player.pause();
   Serial.printf("[btn] play/pause -> %s (track %d)\n",
@@ -72,6 +116,7 @@ void togglePlay() {
 }
 
 void nextTrack() {
+  if (!sdOk || trackCount == 0) return;
   trackIndex = trackIndex % trackCount + 1;
   player.playIndex(trackIndex);
   playing = true;
@@ -80,6 +125,7 @@ void nextTrack() {
 }
 
 void prevTrack() {
+  if (!sdOk || trackCount == 0) return;
   trackIndex = (trackIndex - 2 + trackCount) % trackCount + 1;
   player.playIndex(trackIndex);
   playing = true;
@@ -130,6 +176,32 @@ void checkButtons() {
 }
 
 // ---------------------------------------------------------------------------
+// Module events (track finished, SD card in/out). SD in/out re-detects the
+// track count live so the screen reflects the current card.
+// ---------------------------------------------------------------------------
+void checkMp3Events() {
+  uint8_t cmd;
+  uint16_t param;
+  if (!player.poll(cmd, param)) return;
+
+  if (cmd == kuino::mp3::YX5300::EVT_TRACK_FINISHED) {
+    Serial.printf("[mp3] track %u finished\n", param);
+  } else if (cmd == kuino::mp3::YX5300::EVT_SD_INSERTED) {
+    if (!sdOk) {
+      Serial.println("[mp3] SD inserted");
+      queryTracks();
+    }
+  } else if (cmd == kuino::mp3::YX5300::EVT_SD_REMOVED) {
+    if (sdOk) {
+      Serial.println("[mp3] SD removed");
+      sdOk = false;
+      trackCount = 0;
+      playing = false;
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Boot
 // ---------------------------------------------------------------------------
 void setup() {
@@ -148,46 +220,11 @@ void setup() {
   player.begin(Serial2, MP3_RX, MP3_TX);
   delay(500);  // let the YX6300 boot before querying it
 
-  // Detect the SD card + track count. Falls back to the config.h TRACK_COUNT
-  // if the module doesn't answer (no card, or a firmware that omits queries).
   Serial.println("[melodybox] booting...");
-  uint16_t count = 0;
-  if (player.queryFileCount(count) && count > 0) {
-    trackCount = count;
-    Serial.printf("[melodybox] SD detected: %d tracks\n", trackCount);
-    for (int i = 1; i <= trackCount; i++)
-      Serial.printf("[melodybox]   track %d\n", i);
-  } else {
-    Serial.printf("[melodybox] SD not detected/empty — fallback TRACK_COUNT=%d\n",
-                  trackCount);
-  }
+  queryTracks();  // detect SD + real track count (no hardcoded fallback)
 
   player.volume(volume);
   // Leave paused — the user presses play to start.
-}
-
-// Log unsolicited module events (track finished, SD card in/out). SD state is
-// de-duped: only genuine transitions are logged, so repeated status frames
-// don't spam the log.
-bool sdPresent = true;  // assumed present after the boot query succeeds
-
-void checkMp3Events() {
-  uint8_t cmd;
-  uint16_t param;
-  if (!player.poll(cmd, param)) return;
-  if (cmd == kuino::mp3::YX5300::EVT_TRACK_FINISHED) {
-    Serial.printf("[mp3] track %u finished\n", param);
-  } else if (cmd == kuino::mp3::YX5300::EVT_SD_INSERTED) {
-    if (!sdPresent) {
-      sdPresent = true;
-      Serial.println("[mp3] SD inserted");
-    }
-  } else if (cmd == kuino::mp3::YX5300::EVT_SD_REMOVED) {
-    if (sdPresent) {
-      sdPresent = false;
-      Serial.println("[mp3] SD removed");
-    }
-  }
 }
 
 void loop() {
