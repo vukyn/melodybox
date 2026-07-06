@@ -32,6 +32,7 @@ int  trackIndex = 1;             // 1-based track number
 bool playing    = false;         // start paused — user presses play
 int  volume     = START_VOLUME;  // 0..30
 int  marquee    = 0;             // marquee scroll offset (px)
+unsigned long lastSdRetry = 0;   // last background SD re-detect (ms)
 
 // ---------------------------------------------------------------------------
 // Per-button debounce state (one set per physical button)
@@ -47,28 +48,22 @@ ButtonState btnPlay, btnNext, btnPrev, btnVolUp, btnVolDn;
 // SD / track detection — the source of truth is the module, queried at boot
 // and again whenever a card is (re)inserted. No hardcoded track count.
 // ---------------------------------------------------------------------------
-void queryTracks() {
+// Single detection attempt. Returns true if the module answered (SD readable).
+// On cold power-on the YX6300 + SD need ~1-2s to mount, so this is retried from
+// setup() and periodically from loop() until it succeeds — no reflash needed.
+// (A flash-reset appeared to "fix" detection only because the module stayed
+// powered through the upload and was already mounted.)
+bool tryDetectSd() {
   uint16_t count = 0;
-  bool ok = false;
-  for (int i = 0; i < 3 && !ok; i++) {  // retry: the module can be slow to answer
-    if (player.queryFileCount(count)) ok = true;
-    else delay(200);
-  }
-
-  if (ok) {
-    sdOk = true;
-    trackCount = count;
-    if (count > 0)
-      Serial.printf("[melodybox] SD detected: %d tracks\n", trackCount);
-    else
-      Serial.println("[melodybox] SD detected but no tracks");
-  } else {
-    sdOk = false;
-    trackCount = 0;
-    Serial.println("[melodybox] SD not detected");
-  }
-
+  if (!player.queryFileCount(count)) return false;
+  sdOk = true;
+  trackCount = count;
   if (trackIndex > trackCount) trackIndex = 1;
+  if (count > 0)
+    Serial.printf("[melodybox] SD detected: %d tracks\n", trackCount);
+  else
+    Serial.println("[melodybox] SD detected but no tracks");
+  return true;
 }
 
 // ---------------------------------------------------------------------------
@@ -190,7 +185,7 @@ void checkMp3Events() {
   } else if (cmd == kuino::mp3::YX5300::EVT_SD_INSERTED) {
     if (!sdOk) {
       Serial.println("[mp3] SD inserted");
-      queryTracks();
+      tryDetectSd();
     }
   } else if (cmd == kuino::mp3::YX5300::EVT_SD_REMOVED) {
     if (sdOk) {
@@ -219,10 +214,14 @@ void setup() {
   pinMode(BTN_VOLDN, INPUT_PULLUP);
 
   player.begin(Serial2, MP3_RX, MP3_TX);
-  delay(500);  // let the YX6300 boot before querying it
+  delay(1500);  // cold power-on: the YX6300 + SD card need ~1-2s to be ready
 
   Serial.println("[melodybox] booting...");
-  queryTracks();  // detect SD + real track count (no hardcoded fallback)
+  for (int i = 0; i < 5 && !sdOk; i++) {  // a few tries before falling through
+    if (tryDetectSd()) break;
+    delay(300);
+  }
+  if (!sdOk) Serial.println("[melodybox] SD not ready yet — retrying in background");
 
   player.volume(volume);
   // Leave paused — the user presses play to start.
@@ -231,6 +230,14 @@ void setup() {
 void loop() {
   checkButtons();
   checkMp3Events();
+
+  // Self-heal: if the card wasn't ready at boot (cold power-on), keep retrying
+  // in the background so it recovers on its own without a reflash.
+  if (!sdOk && millis() - lastSdRetry > 2000) {
+    lastSdRetry = millis();
+    tryDetectSd();
+  }
+
   marquee += 1;
   render();
   delay(40);  // ~25fps for a smooth marquee
