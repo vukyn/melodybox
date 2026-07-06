@@ -186,6 +186,7 @@ void checkMp3Events() {
 
   if (cmd == kuino::mp3::YX5300::EVT_TRACK_FINISHED) {
     Serial.printf("[mp3] track %u finished\n", param);
+    if (sdOk && trackCount > 0) nextTrack();  // auto-advance to the next track
   } else if (cmd == kuino::mp3::YX5300::EVT_SD_INSERTED) {
     if (!sdOk) {
       Serial.println("[mp3] SD inserted");
