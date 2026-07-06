@@ -5,10 +5,11 @@ Offline ESP32-classic MP3 player firmware (originally scaffolded from gobuild's
 
 **Not a Go platform service** — C++/Arduino/PlatformIO firmware. The platform
 clean-arch template, gobuild Go presets, DI, domains, the kuery shared-pkg rule,
-and the code-review-graph MCP DO NOT apply here. Reusable firmware code belongs
-in the shared **kuino** library (imported via `lib_deps`), not copied into this
-repo. IDE clang shows false `Arduino.h not found` / undeclared errors (no ESP32
-toolchain include paths) — trust only `pio run`.
+and the code-review-graph MCP DO NOT apply here. No UI, no `/etc/hosts` entry.
+Has mprocs procs (root `mprocs.yaml`) for build/flash/monitor. Reusable firmware
+code belongs in the shared **kuino** library (imported via `lib_deps`), not
+copied into this repo. IDE clang shows false `Arduino.h not found` / undeclared
+errors (no ESP32 toolchain include paths) — trust only `pio run`.
 
 ## What it is
 A standalone, offline MP3 player: no WiFi. Tracks live on the SD card of a
