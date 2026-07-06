@@ -27,6 +27,7 @@ kuino::mp3::YX5300 player;
 // Player state (kept in sync with the module by every action)
 // ---------------------------------------------------------------------------
 int  trackIndex = 1;             // 1-based track number
+int  trackCount = TRACK_COUNT;   // total tracks (overridden by SD query at boot)
 bool playing    = false;         // start paused — user presses play
 int  volume     = START_VOLUME;  // 0..30
 int  marquee    = 0;             // marquee scroll offset (px)
@@ -66,20 +67,24 @@ void render() {
 void togglePlay() {
   playing = !playing;
   playing ? player.play() : player.pause();
+  Serial.printf("[btn] play/pause -> %s (track %d)\n",
+                playing ? "PLAY" : "PAUSE", trackIndex);
 }
 
 void nextTrack() {
-  trackIndex = trackIndex % TRACK_COUNT + 1;
+  trackIndex = trackIndex % trackCount + 1;
   player.playIndex(trackIndex);
   playing = true;
   marquee = 0;
+  Serial.printf("[btn] next -> track %d/%d\n", trackIndex, trackCount);
 }
 
 void prevTrack() {
-  trackIndex = (trackIndex - 2 + TRACK_COUNT) % TRACK_COUNT + 1;
+  trackIndex = (trackIndex - 2 + trackCount) % trackCount + 1;
   player.playIndex(trackIndex);
   playing = true;
   marquee = 0;
+  Serial.printf("[btn] prev -> track %d/%d\n", trackIndex, trackCount);
 }
 
 void volumeUp() {
@@ -87,6 +92,7 @@ void volumeUp() {
     volume++;
     player.volume(volume);
   }
+  Serial.printf("[btn] vol+ -> %d\n", volume);
 }
 
 void volumeDown() {
@@ -94,6 +100,7 @@ void volumeDown() {
     volume--;
     player.volume(volume);
   }
+  Serial.printf("[btn] vol- -> %d\n", volume);
 }
 
 // ---------------------------------------------------------------------------
@@ -139,12 +146,43 @@ void setup() {
   pinMode(BTN_VOLDN, INPUT_PULLUP);
 
   player.begin(Serial2, MP3_RX, MP3_TX);
+  delay(500);  // let the YX6300 boot before querying it
+
+  // Detect the SD card + track count. Falls back to the config.h TRACK_COUNT
+  // if the module doesn't answer (no card, or a firmware that omits queries).
+  Serial.println("[melodybox] booting...");
+  uint16_t count = 0;
+  if (player.queryFileCount(count) && count > 0) {
+    trackCount = count;
+    Serial.printf("[melodybox] SD detected: %d tracks\n", trackCount);
+    for (int i = 1; i <= trackCount; i++)
+      Serial.printf("[melodybox]   track %d\n", i);
+  } else {
+    Serial.printf("[melodybox] SD not detected/empty — fallback TRACK_COUNT=%d\n",
+                  trackCount);
+  }
+
   player.volume(volume);
   // Leave paused — the user presses play to start.
 }
 
+// Log unsolicited module events (track finished, SD card in/out).
+void checkMp3Events() {
+  uint8_t cmd;
+  uint16_t param;
+  if (!player.poll(cmd, param)) return;
+  if (cmd == kuino::mp3::YX5300::EVT_TRACK_FINISHED) {
+    Serial.printf("[mp3] track %u finished\n", param);
+  } else if (cmd == kuino::mp3::YX5300::EVT_SD_INSERTED) {
+    Serial.println("[mp3] SD inserted");
+  } else if (cmd == kuino::mp3::YX5300::EVT_SD_REMOVED) {
+    Serial.println("[mp3] SD removed");
+  }
+}
+
 void loop() {
   checkButtons();
+  checkMp3Events();
   marquee += 1;
   render();
   delay(40);  // ~25fps for a smooth marquee
