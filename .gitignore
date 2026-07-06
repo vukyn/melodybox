@@ -4,3 +4,6 @@ include/config.h
 # PlatformIO build output
 .pio/
 .vscode/
+
+# Claude Code agent-local scratch (subagent memory, etc.)
+.claude/
