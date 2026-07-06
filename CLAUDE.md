@@ -19,9 +19,13 @@ an SSD1306 OLED shows the now-playing screen.
 ## Stack / hardware
 - ESP32 classic (WROOM-32, board `esp32dev`, `huge_app.csv` partitions for the
   VN unifont), Arduino framework via PlatformIO
-- SSD1306 128x64 OLED on HW I2C (SDA 21 / SCL 22)
-- YX6300 MP3 module on UART2 (Serial2, RX 16 / TX 17, 9600 baud)
+- SSD1306 128x64 OLED on HW I2C (SDA 21 / SCL 22) — **VCC ← 3V3** (matches the
+  ESP32 3.3V I2C logic level; low current)
+- YX6300 MP3 module on UART2 (Serial2, RX 16 / TX 17, 9600 baud) — **VCC ← VIN
+  (~5V when USB-powered)**, NOT 3V3: the SD card + DAC need 5V, and an
+  underpowered module browns out → phantom SD inserted/removed loop
 - 5 push buttons (active-low, `INPUT_PULLUP`)
+- **Common GND** across ESP32, OLED, YX6300 (mandatory)
 - Shared lib: `github.com/vukyn/kuino` — mp3 + display + button modules only.
   NO wifi / httpjson (this device is offline).
 
