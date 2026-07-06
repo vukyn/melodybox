@@ -21,6 +21,5 @@
 // Starting volume (0..30)
 #define START_VOLUME 18
 
-// Number of tracks on the SD card (for wrap-around on next/prev). Set to your
-// card's file count.
-#define TRACK_COUNT 20
+// Track count is auto-detected from the SD card at boot (queried from the
+// YX6300) — no need to hardcode it.

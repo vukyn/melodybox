@@ -38,6 +38,8 @@ pio device monitor
 ```
 
 ## config.h
-Device wiring (pins, `START_VOLUME`, `TRACK_COUNT`) lives in `include/config.h`
-— gitignored. Copy from `include/config.h.example`. No secrets (offline device),
-but the file stays gitignored so per-device wiring never lands in the repo.
+Device wiring (pins, `START_VOLUME`) lives in `include/config.h` — gitignored.
+Copy from `include/config.h.example`. Track count is auto-detected from the SD
+card at boot (queried from the YX6300), not configured. No secrets (offline
+device), but the file stays gitignored so per-device wiring never lands in the
+repo.
