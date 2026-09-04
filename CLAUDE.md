@@ -11,6 +11,24 @@ code belongs in the shared **kuino** library (imported via `lib_deps`), not
 copied into this repo. IDE clang shows false `Arduino.h not found` / undeclared
 errors (no ESP32 toolchain include paths) — trust only `pio run`.
 
+## The memory layer
+
+@MEMORY.md
+
+⚠️ **That import is the point of the file, not decoration.** `MEMORY.md` and
+`memory/` are the distilled layer — one hard-won fact per file, with why it
+matters — and they live **in the repository** because a machine's own Claude
+memory directory is workspace-scoped and machine-local: this repo opened on
+another machine, or outside the workspace the notes were written in, arrived with
+none of them.
+
+It is a **distillation, not the record.** This file and the repository's other
+documents stay the authority; where a note disagrees with the file that owns the
+subject, the repository wins and the note is what to fix. `MEMORY.md` carries the
+rules the notes are written under — one line per note in the index, one fact per
+file, say why rather than only what, and delete a wrong note rather than adding a
+second one beside it.
+
 ## What it is
 A standalone, offline MP3 player: no WiFi. Tracks live on the SD card of a
 YX6300 serial MP3 module; 5 buttons drive play/pause, next, prev, and volume;
